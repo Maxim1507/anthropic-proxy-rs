@@ -5,6 +5,7 @@ use std::{collections::BTreeMap, env, path::PathBuf};
 #[derive(Debug, Clone)]
 pub struct Config {
     pub port: u16,
+    pub bind: String,
     pub upstream_urls: Vec<String>,
     pub api_key: Option<String>,
     pub passthrough_api_key: bool,
@@ -20,6 +21,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             port: 3000,
+            bind: "0.0.0.0".to_string(),
             upstream_urls: vec!["http://localhost:11434".to_string()],
             api_key: None,
             passthrough_api_key: false,
@@ -81,6 +83,12 @@ impl Config {
             .and_then(|p| p.parse().ok())
             .unwrap_or(3000);
 
+        let bind = env::var("ANTHROPIC_PROXY_BIND")
+            .ok()
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+            .unwrap_or_else(|| "0.0.0.0".to_string());
+
         let raw_urls = env::var("UPSTREAM_BASE_URL")
             .or_else(|_| env::var("ANTHROPIC_PROXY_BASE_URL"))
             .map_err(|_| {
@@ -139,6 +147,7 @@ impl Config {
 
         Ok(Config {
             port,
+            bind,
             upstream_urls,
             api_key,
             passthrough_api_key,
@@ -592,5 +601,20 @@ mod tests {
         };
         assert!(config.passthrough_api_key);
         assert!(config.api_key.is_none());
+    }
+
+    #[test]
+    fn bind_defaults_to_zero_zero_zero_zero() {
+        let config = Config::default();
+        assert_eq!(config.bind, "0.0.0.0");
+    }
+
+    #[test]
+    fn bind_accepts_loopback() {
+        let config = Config {
+            bind: "127.0.0.1".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(config.bind, "127.0.0.1");
     }
 }

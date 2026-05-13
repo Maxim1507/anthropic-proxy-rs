@@ -85,6 +85,12 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
     if let Some(port) = cli.port {
         config.port = port;
     }
+    if let Some(bind) = cli.bind {
+        let trimmed = bind.trim();
+        if !trimmed.is_empty() {
+            config.bind = trimmed.to_string();
+        }
+    }
     if !cli.system_prompt_ignore.is_empty() {
         config.system_prompt_ignore_terms.extend(
             cli.system_prompt_ignore
@@ -112,6 +118,7 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
         .init();
 
     tracing::info!("Starting Anthropic Proxy v{}", env!("CARGO_PKG_VERSION"));
+    tracing::info!("Bind: {}", config.bind);
     tracing::info!("Port: {}", config.port);
     tracing::info!("Upstream URLs: {}", config.upstream_urls.join("; "));
     tracing::info!(
@@ -178,8 +185,16 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
         .layer(TraceLayer::new_for_http())
         .layer(cors);
 
-    let addr = format!("0.0.0.0:{}", config.port);
+    let addr = format!("{}:{}", config.bind, config.port);
     let listener = tokio::net::TcpListener::bind(&addr).await?;
+
+    if config.bind == "0.0.0.0" {
+        tracing::warn!(
+            "Binding to 0.0.0.0 exposes the proxy on every network interface. \
+             The proxy may hold an Anthropic API key, which makes this risky on shared networks. \
+             Set --bind 127.0.0.1 (or ANTHROPIC_PROXY_BIND=127.0.0.1) to restrict to localhost."
+        );
+    }
 
     tracing::info!("Listening on {}", addr);
     tracing::info!("Proxy ready to accept requests");
