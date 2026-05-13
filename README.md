@@ -71,6 +71,7 @@ anthropic-proxy --help
 | `--debug` | `-d` | Enable debug logging |
 | `--verbose` | `-v` | Enable verbose logging (logs full request/response bodies) |
 | `--port <PORT>` | `-p` | Port to listen on (overrides PORT env var) |
+| `--bind <ADDR>` | | Address to bind the listener to (overrides `ANTHROPIC_PROXY_BIND`, default `0.0.0.0`) |
 | `--system-prompt-ignore <TEXT>` | | Remove one or more system prompt terms before forwarding upstream (repeat or separate with `;`) |
 | `--daemon` | | Run as background daemon |
 | `--pid-file <FILE>` | | PID file path (default: `/tmp/anthropic-proxy.pid`) |
@@ -87,6 +88,7 @@ Configuration can be set via environment variables or `.env` file:
 | `UPSTREAM_API_KEY` | No* | - | API key for upstream service |
 | `UPSTREAM_API_KEY_PASSTHROUGH` | No | `false` | Extract API key from incoming `x-api-key` header per request (`true`/`false`) |
 | `PORT` | No | `3000` | Server port |
+| `ANTHROPIC_PROXY_BIND` | No | `0.0.0.0` | Listener bind address. Set to `127.0.0.1` to restrict access to localhost (recommended on shared networks). When bound to `0.0.0.0`, a warning is logged. |
 | `ANTHROPIC_PROXY_SYSTEM_PROMPT_IGNORE_TERMS` | No | - | System prompt terms to remove before forwarding upstream (`;` or newline separated) |
 | `ANTHROPIC_PROXY_MODEL_MAP` | No | - | Exact model remapping before the upstream call (`source=target;other=target`) |
 | `REASONING_MODEL` | No | (uses request model) | Model to use when extended thinking is enabled** |
