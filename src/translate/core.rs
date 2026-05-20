@@ -10,6 +10,7 @@ pub fn translate_message(msg: anthropic::Message) -> ProxyResult<Vec<openai::Mes
             result.push(openai::Message {
                 role: msg.role,
                 content: Some(openai::MessageContent::Text(text)),
+                reasoning_content: None,
                 tool_calls: None,
                 tool_call_id: None,
                 name: None,
@@ -17,6 +18,7 @@ pub fn translate_message(msg: anthropic::Message) -> ProxyResult<Vec<openai::Mes
         }
         anthropic::MessageContent::Blocks(blocks) => {
             let mut content_parts = Vec::new();
+            let mut reasoning_parts = Vec::new();
             let mut tool_calls = Vec::new();
 
             for block in blocks {
@@ -49,16 +51,21 @@ pub fn translate_message(msg: anthropic::Message) -> ProxyResult<Vec<openai::Mes
                         result.push(openai::Message {
                             role: "tool".to_string(),
                             content: Some(openai::MessageContent::Text(content)),
+                            reasoning_content: None,
                             tool_calls: None,
                             tool_call_id: Some(tool_use_id),
                             name: None,
                         });
                     }
-                    anthropic::ContentBlock::Thinking { .. } => {}
+                    anthropic::ContentBlock::Thinking { thinking } => {
+                        if !thinking.is_empty() {
+                            reasoning_parts.push(thinking);
+                        }
+                    }
                 }
             }
 
-            if !content_parts.is_empty() || !tool_calls.is_empty() {
+            if !content_parts.is_empty() || !tool_calls.is_empty() || !reasoning_parts.is_empty() {
                 let content = if content_parts.is_empty() {
                     None
                 } else if content_parts.len() == 1 {
@@ -75,6 +82,11 @@ pub fn translate_message(msg: anthropic::Message) -> ProxyResult<Vec<openai::Mes
                 result.push(openai::Message {
                     role: msg.role,
                     content,
+                    reasoning_content: if reasoning_parts.is_empty() {
+                        None
+                    } else {
+                        Some(reasoning_parts.join(""))
+                    },
                     tool_calls: if tool_calls.is_empty() {
                         None
                     } else {
@@ -263,6 +275,53 @@ fn is_word_byte(byte: Option<u8>) -> bool {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn thinking_block_becomes_reasoning_content() {
+        let msg = anthropic::Message {
+            role: "assistant".to_string(),
+            content: anthropic::MessageContent::Blocks(vec![
+                anthropic::ContentBlock::Thinking {
+                    thinking: "I should preserve this".to_string(),
+                },
+                anthropic::ContentBlock::Text {
+                    text: "Answer".to_string(),
+                    cache_control: None,
+                },
+            ]),
+        };
+
+        let translated = translate_message(msg).unwrap();
+
+        assert_eq!(translated.len(), 1);
+        assert_eq!(
+            translated[0].reasoning_content.as_deref(),
+            Some("I should preserve this")
+        );
+        assert!(matches!(
+            translated[0].content,
+            Some(openai::MessageContent::Text(_))
+        ));
+    }
+
+    #[test]
+    fn thinking_only_block_still_becomes_assistant_message() {
+        let msg = anthropic::Message {
+            role: "assistant".to_string(),
+            content: anthropic::MessageContent::Blocks(vec![anthropic::ContentBlock::Thinking {
+                thinking: "hidden chain".to_string(),
+            }]),
+        };
+
+        let translated = translate_message(msg).unwrap();
+
+        assert_eq!(translated.len(), 1);
+        assert!(translated[0].content.is_none());
+        assert_eq!(
+            translated[0].reasoning_content.as_deref(),
+            Some("hidden chain")
+        );
+    }
 
     #[test]
     fn normalize_schema_adds_empty_required_to_object_schemas() {

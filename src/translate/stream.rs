@@ -85,7 +85,10 @@ pub fn translate_chunk(state: &mut StreamState, chunk: &openai::StreamChunk) -> 
         state.message_started = true;
     }
 
-    if let Some(reasoning) = &choice.delta.reasoning {
+    for reasoning in [&choice.delta.reasoning, &choice.delta.reasoning_content]
+        .into_iter()
+        .flatten()
+    {
         emit_reasoning(&mut events, state, reasoning);
     }
 
@@ -227,6 +230,7 @@ fn emit_finish(
             stop_sequence: None,
         },
         usage: DeltaUsage {
+            input_tokens: usage.map(|u| u.prompt_tokens),
             output_tokens: usage.map(|u| u.completion_tokens).unwrap_or(0),
         },
     });
@@ -253,10 +257,38 @@ mod tests {
         .unwrap()
     }
 
+    fn reasoning_content_chunk(id: &str, model: &str, reasoning: &str) -> openai::StreamChunk {
+        serde_json::from_value(json!({
+            "id": id, "model": model,
+            "choices": [{ "index": 0, "delta": { "reasoning_content": reasoning } }]
+        }))
+        .unwrap()
+    }
+
     fn finish_chunk(id: &str, model: &str, reason: &str) -> openai::StreamChunk {
         serde_json::from_value(json!({
             "id": id, "model": model,
             "choices": [{ "index": 0, "delta": {}, "finish_reason": reason }]
+        }))
+        .unwrap()
+    }
+
+    fn finish_chunk_with_usage(
+        id: &str,
+        model: &str,
+        reason: &str,
+        prompt_tokens: u32,
+        completion_tokens: u32,
+    ) -> openai::StreamChunk {
+        serde_json::from_value(json!({
+            "id": id,
+            "model": model,
+            "choices": [{ "index": 0, "delta": {}, "finish_reason": reason }],
+            "usage": {
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "total_tokens": prompt_tokens + completion_tokens
+            }
         }))
         .unwrap()
     }
@@ -340,6 +372,25 @@ mod tests {
     }
 
     #[test]
+    fn reasoning_content_produces_thinking_block() {
+        let mut state = initial_state("fallback".into());
+
+        let events = translate_chunk(&mut state, &reasoning_content_chunk("1", "gpt-4o", "Think"));
+
+        assert_eq!(
+            event_types(&events),
+            [
+                "message_start",
+                "content_block_start",
+                "content_block_delta"
+            ]
+        );
+        if let StreamEvent::ContentBlockDelta { delta, .. } = &events[2] {
+            assert!(matches!(delta, Delta::ThinkingDelta { thinking } if thinking == "Think"));
+        }
+    }
+
+    #[test]
     fn tool_call_stream() {
         let mut state = initial_state("fallback".into());
 
@@ -370,6 +421,24 @@ mod tests {
 
         if let StreamEvent::MessageDelta { delta, .. } = &e3[1] {
             assert_eq!(delta.stop_reason.as_deref(), Some("tool_use"));
+        }
+    }
+
+    #[test]
+    fn finish_chunk_with_usage_maps_input_and_output_tokens() {
+        let mut state = initial_state("fallback".into());
+
+        translate_chunk(&mut state, &text_chunk("1", "gpt-4o", "Hello"));
+        let events = translate_chunk(
+            &mut state,
+            &finish_chunk_with_usage("1", "gpt-4o", "stop", 7, 3),
+        );
+
+        if let StreamEvent::MessageDelta { usage, .. } = &events[1] {
+            assert_eq!(usage.input_tokens, Some(7));
+            assert_eq!(usage.output_tokens, 3);
+        } else {
+            panic!("expected message_delta");
         }
     }
 

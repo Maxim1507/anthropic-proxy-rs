@@ -427,6 +427,15 @@ mod tests {
         format!("data: {}\n\n", serde_json::to_string(&chunk).unwrap())
     }
 
+    fn openai_chunk_with_reasoning_content(id: &str, model: &str, reasoning: &str) -> String {
+        let chunk = json!({
+            "id": id,
+            "model": model,
+            "choices": [{ "index": 0, "delta": { "reasoning_content": reasoning } }],
+        });
+        format!("data: {}\n\n", serde_json::to_string(&chunk).unwrap())
+    }
+
     fn openai_chunk_with_tool_call(
         id: &str,
         model: &str,
@@ -625,6 +634,23 @@ mod tests {
         assert_eq!(events[5]["type"], "content_block_start");
         assert_eq!(events[5]["content_block"]["type"], "text");
         assert_eq!(events[5]["index"], 1);
+    }
+
+    #[tokio::test]
+    async fn reasoning_content_stream_produces_thinking_block() {
+        let chunks = vec![
+            openai_chunk_with_reasoning_content("chatcmpl-2", "gpt-4o", "Let me think..."),
+            openai_chunk("chatcmpl-2", "gpt-4o", Some("The answer is 42"), None),
+            openai_chunk("chatcmpl-2", "gpt-4o", None, Some("stop")),
+            openai_done(),
+        ];
+
+        let events = collect_events(chunks, "fallback").await;
+
+        assert_eq!(events[1]["type"], "content_block_start");
+        assert_eq!(events[1]["content_block"]["type"], "thinking");
+        assert_eq!(events[2]["delta"]["type"], "thinking_delta");
+        assert_eq!(events[2]["delta"]["thinking"], "Let me think...");
     }
 
     #[tokio::test]

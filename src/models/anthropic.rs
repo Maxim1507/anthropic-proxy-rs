@@ -235,6 +235,8 @@ pub struct MessageDeltaData {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeltaUsage {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input_tokens: Option<u32>,
     pub output_tokens: u32,
 }
 

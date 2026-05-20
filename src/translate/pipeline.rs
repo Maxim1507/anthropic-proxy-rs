@@ -28,6 +28,7 @@ pub fn translate_request(
                         text,
                         &policy.ignore_terms,
                     ))),
+                    reasoning_content: None,
                     tool_calls: None,
                     tool_call_id: None,
                     name: None,
@@ -41,6 +42,7 @@ pub fn translate_request(
                             msg.text,
                             &policy.ignore_terms,
                         ))),
+                        reasoning_content: None,
                         tool_calls: None,
                         tool_call_id: None,
                         name: None,
@@ -76,6 +78,11 @@ pub fn translate_request(
         top_p: req.top_p,
         stop: req.stop_sequences,
         stream: req.stream,
+        stream_options: req.stream.and_then(|stream| {
+            stream.then_some(openai::StreamOptions {
+                include_usage: true,
+            })
+        }),
         tools,
         tool_choice: None,
     })
@@ -294,6 +301,59 @@ mod tests {
             }
             _ => panic!("expected sanitized system prompt"),
         }
+    }
+
+    #[test]
+    fn streaming_request_includes_usage_stream_options() {
+        let req = anthropic::AnthropicRequest {
+            model: "gpt-4o".to_string(),
+            messages: vec![anthropic::Message {
+                role: "user".to_string(),
+                content: anthropic::MessageContent::Text("hi".to_string()),
+            }],
+            max_tokens: 100,
+            system: None,
+            temperature: None,
+            top_p: None,
+            top_k: None,
+            stop_sequences: None,
+            stream: Some(true),
+            tools: None,
+            metadata: None,
+            extra: json!({}),
+        };
+
+        let openai = translate_request(req, &default_policy()).unwrap();
+
+        assert_eq!(
+            openai.stream_options.map(|options| options.include_usage),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn non_streaming_request_omits_usage_stream_options() {
+        let req = anthropic::AnthropicRequest {
+            model: "gpt-4o".to_string(),
+            messages: vec![anthropic::Message {
+                role: "user".to_string(),
+                content: anthropic::MessageContent::Text("hi".to_string()),
+            }],
+            max_tokens: 100,
+            system: None,
+            temperature: None,
+            top_p: None,
+            top_k: None,
+            stop_sequences: None,
+            stream: Some(false),
+            tools: None,
+            metadata: None,
+            extra: json!({}),
+        };
+
+        let openai = translate_request(req, &default_policy()).unwrap();
+
+        assert!(openai.stream_options.is_none());
     }
 
     #[test]
