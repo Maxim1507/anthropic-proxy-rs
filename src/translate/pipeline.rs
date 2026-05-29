@@ -521,6 +521,41 @@ mod tests {
     }
 
     #[test]
+    fn deserializes_tool_result_with_nested_content_blocks() {
+        let body = json!({
+            "model": "gpt-4o",
+            "max_tokens": 100,
+            "messages": [{
+                "role": "user",
+                "content": [{
+                    "type": "tool_result",
+                    "tool_use_id": "tool_42",
+                    "content": [
+                        {"type": "text", "text": "first chunk"},
+                        {"type": "text", "text": "second chunk"}
+                    ]
+                }]
+            }]
+        });
+
+        let req: anthropic::AnthropicRequest = serde_json::from_value(body).unwrap();
+        let openai = translate_request(req, &default_policy()).unwrap();
+
+        let tool_msg = openai
+            .messages
+            .iter()
+            .find(|m| m.role == "tool")
+            .expect("expected a tool message");
+        assert_eq!(tool_msg.tool_call_id, Some("tool_42".to_string()));
+        match &tool_msg.content {
+            Some(openai::MessageContent::Text(text)) => {
+                assert_eq!(text, "first chunk\nsecond chunk");
+            }
+            other => panic!("expected flattened text content, got {:?}", other),
+        }
+    }
+
+    #[test]
     fn converts_multiple_system_prompts() {
         let req = anthropic::AnthropicRequest {
             model: "gpt-4o".to_string(),
