@@ -1,4 +1,24 @@
-# anthropic-proxy-rs
+# anthropic-proxy-rs (containerized-claude fork)
+
+Fork of [m0n0x41d/anthropic-proxy-rs](https://github.com/m0n0x41d/anthropic-proxy-rs) with patches applied for use as the Swisscom-Qwen translator inside [containerized-claude](https://github.com/m0n0x41d/containerized-claude).
+
+Patches relative to upstream `v1.2.0`:
+
+- **`coalesce_system_messages`** — every `role: "system"` entry, whether sent
+  via the top-level `system` field or inline in `messages[]`, is merged into
+  a single system message at index 0. General-purpose fix for strict
+  OpenAI-compatible servers (e.g. Swisscom AI Platform) that reject mid-stream
+  system messages with `400 "System message must be at the beginning."`
+  Triggered by Claude Code v2.1.159+ which injects skill reminders inline.
+- **`chat_template_kwargs` support via `QWEN_DISABLE_THINKING` env var** —
+  when `QWEN_DISABLE_THINKING=true` (or `1`/`yes`/`on`), the proxy adds
+  `chat_template_kwargs: {"enable_thinking": false}` to the upstream request
+  so Qwen-style chat templates skip the reasoning preamble. Unset (default):
+  field omitted, behavior unchanged from upstream.
+
+Upstream base: [v1.2.0](https://github.com/m0n0x41d/anthropic-proxy-rs/releases/tag/v1.2.0).
+
+---
 
 High-performance Rust proxy that translates Anthropic API requests to OpenAI-compatible format. Use Claude Code, Claude Desktop, or any Anthropic API client with OpenRouter, native OpenAI, or any OpenAI-compatible endpoint.
 
