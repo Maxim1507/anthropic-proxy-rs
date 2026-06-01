@@ -87,7 +87,33 @@ pub fn translate_request(
         }),
         tools,
         tool_choice: None,
+        chat_template_kwargs: chat_template_kwargs_from_env(),
     })
+}
+
+// Build the upstream's chat_template_kwargs blob from environment variables.
+// Right now only QWEN_DISABLE_THINKING is supported: when set to a truthy
+// value, emits {"enable_thinking": false} so Qwen's chat template skips the
+// reasoning preamble (saves tokens and latency for tool-calling workloads).
+// Returns None when no relevant env var is set, so the field is omitted from
+// the upstream request and behavior matches upstream's default.
+fn chat_template_kwargs_from_env() -> Option<Value> {
+    let mut kwargs = serde_json::Map::new();
+
+    if let Ok(raw) = std::env::var("QWEN_DISABLE_THINKING") {
+        if matches!(
+            raw.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        ) {
+            kwargs.insert("enable_thinking".to_string(), json!(false));
+        }
+    }
+
+    if kwargs.is_empty() {
+        None
+    } else {
+        Some(Value::Object(kwargs))
+    }
 }
 
 pub fn translate_response(
@@ -390,6 +416,55 @@ mod tests {
             openai.stream_options.map(|options| options.include_usage),
             Some(true)
         );
+    }
+
+    #[test]
+    fn qwen_disable_thinking_env_controls_chat_template_kwargs() {
+        // Both branches live in one test to avoid env-var races with other
+        // parallel tests touching QWEN_DISABLE_THINKING.
+        let make_req = || anthropic::AnthropicRequest {
+            model: "gpt-4o".to_string(),
+            messages: vec![anthropic::Message {
+                role: "user".to_string(),
+                content: anthropic::MessageContent::Text("hi".to_string()),
+            }],
+            max_tokens: 100,
+            system: None,
+            temperature: None,
+            top_p: None,
+            top_k: None,
+            stop_sequences: None,
+            stream: None,
+            tools: None,
+            metadata: None,
+            extra: json!({}),
+        };
+
+        let prev = std::env::var("QWEN_DISABLE_THINKING").ok();
+        std::env::remove_var("QWEN_DISABLE_THINKING");
+
+        let openai = translate_request(make_req(), &default_policy()).unwrap();
+        assert!(
+            openai.chat_template_kwargs.is_none(),
+            "field must be omitted when env var is unset"
+        );
+        let serialized = serde_json::to_value(&openai).unwrap();
+        assert!(
+            serialized.get("chat_template_kwargs").is_none(),
+            "serialized JSON must omit the field, got {serialized}"
+        );
+
+        std::env::set_var("QWEN_DISABLE_THINKING", "true");
+        let openai = translate_request(make_req(), &default_policy()).unwrap();
+        assert_eq!(
+            openai.chat_template_kwargs,
+            Some(json!({"enable_thinking": false}))
+        );
+
+        match prev {
+            Some(v) => std::env::set_var("QWEN_DISABLE_THINKING", v),
+            None => std::env::remove_var("QWEN_DISABLE_THINKING"),
+        }
     }
 
     #[test]

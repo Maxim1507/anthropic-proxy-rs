@@ -22,6 +22,13 @@ pub struct OpenAIRequest {
     pub tools: Option<Vec<Tool>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_choice: Option<Value>,
+    // Forwarded verbatim to the upstream chat-completions endpoint. Servers
+    // that build prompts via a chat template (e.g. Qwen via vLLM) read keys
+    // out of this object — for instance `enable_thinking: false` to suppress
+    // reasoning output. Omitted when None so we stay drop-in-compatible with
+    // upstream that does not set it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub chat_template_kwargs: Option<Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
