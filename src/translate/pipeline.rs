@@ -56,6 +56,8 @@ pub fn translate_request(
         openai_messages.extend(core::translate_message(msg)?);
     }
 
+    openai_messages = coalesce_system_messages(openai_messages);
+
     let tools = req.tools.and_then(|tools| {
         let filtered: Vec<_> = tools
             .into_iter()
@@ -192,6 +194,65 @@ fn select_model(req: &anthropic::AnthropicRequest, policy: &TranslationPolicy) -
     };
 
     policy.model_map.get(&model).cloned().unwrap_or(model)
+}
+
+// Many OpenAI-compatible servers (e.g. Swisscom AI Platform) reject requests
+// where a `role: "system"` message appears after a non-system one, with
+// "System message must be at the beginning." Claude Code v2.x sometimes
+// injects skills/reminder text mid-conversation as `role: "system"` entries
+// inside `messages[]`. Merge every system entry (regardless of original
+// position) into a single system message at index 0 so the upstream stays
+// happy without losing content.
+fn coalesce_system_messages(messages: Vec<openai::Message>) -> Vec<openai::Message> {
+    let has_system = messages.iter().any(|m| m.role == "system");
+    if !has_system {
+        return messages;
+    }
+
+    let mut system_parts: Vec<String> = Vec::new();
+    let mut rest: Vec<openai::Message> = Vec::with_capacity(messages.len());
+
+    for msg in messages {
+        if msg.role == "system" {
+            match msg.content {
+                Some(openai::MessageContent::Text(text)) => {
+                    if !text.is_empty() {
+                        system_parts.push(text);
+                    }
+                }
+                Some(openai::MessageContent::Parts(parts)) => {
+                    for part in parts {
+                        if let openai::ContentPart::Text { text } = part {
+                            if !text.is_empty() {
+                                system_parts.push(text);
+                            }
+                        }
+                    }
+                }
+                None => {}
+            }
+        } else {
+            rest.push(msg);
+        }
+    }
+
+    if system_parts.is_empty() {
+        return rest;
+    }
+
+    let merged = openai::Message {
+        role: "system".to_string(),
+        content: Some(openai::MessageContent::Text(system_parts.join("\n\n"))),
+        reasoning_content: None,
+        tool_calls: None,
+        tool_call_id: None,
+        name: None,
+    };
+
+    let mut out = Vec::with_capacity(rest.len() + 1);
+    out.push(merged);
+    out.extend(rest);
+    out
 }
 
 fn sanitize_prompt(text: String, terms: &[String]) -> String {
@@ -588,12 +649,70 @@ mod tests {
 
         let openai = translate_request(req, &default_policy()).unwrap();
 
+        // After the coalescer, multiple top-level system prompts get merged
+        // into a single system message (with both bodies preserved) so that
+        // strict OpenAI-compat servers don't reject the request.
         let system_msgs: Vec<_> = openai
             .messages
             .iter()
             .filter(|m| m.role == "system")
             .collect();
-        assert_eq!(system_msgs.len(), 2);
+        assert_eq!(system_msgs.len(), 1);
+        match &system_msgs[0].content {
+            Some(openai::MessageContent::Text(text)) => {
+                assert!(text.contains("You are helpful."));
+                assert!(text.contains("Be concise."));
+            }
+            other => panic!("expected merged text, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn coalesces_inline_system_messages_to_front() {
+        // Claude Code sometimes sends role=system entries inside messages[]
+        // mid-conversation. Strict OpenAI servers reject that. We must merge
+        // every system entry into one and place it at index 0.
+        let body = json!({
+            "model": "gpt-4o",
+            "max_tokens": 100,
+            "system": "Top-level system prompt.",
+            "messages": [
+                {"role": "user", "content": "first user turn"},
+                {"role": "system", "content": "Reminder: skill X is available."},
+                {"role": "assistant", "content": "ok"},
+                {"role": "system", "content": "Reminder: skill Y is available."},
+                {"role": "user", "content": "do the thing"}
+            ]
+        });
+
+        let req: anthropic::AnthropicRequest = serde_json::from_value(body).unwrap();
+        let openai = translate_request(req, &default_policy()).unwrap();
+
+        let system_indices: Vec<_> = openai
+            .messages
+            .iter()
+            .enumerate()
+            .filter(|(_, m)| m.role == "system")
+            .map(|(i, _)| i)
+            .collect();
+        assert_eq!(system_indices, vec![0]);
+
+        match &openai.messages[0].content {
+            Some(openai::MessageContent::Text(text)) => {
+                assert!(text.contains("Top-level system prompt."));
+                assert!(text.contains("Reminder: skill X is available."));
+                assert!(text.contains("Reminder: skill Y is available."));
+            }
+            other => panic!("expected merged system text, got {:?}", other),
+        }
+
+        let rest_roles: Vec<_> = openai
+            .messages
+            .iter()
+            .skip(1)
+            .map(|m| m.role.as_str())
+            .collect();
+        assert_eq!(rest_roles, vec!["user", "assistant", "user"]);
     }
 
     #[test]
